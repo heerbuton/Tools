@@ -1,137 +1,241 @@
 """
-Toolbox GUI v2.0 - 电脑维护工具箱可视化版
+Toolbox GUI v3.0 - 电脑维护工具箱
+现代设计 + Markdown 渲染 + 全量扫描
 """
 
 import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox
-import subprocess
-import threading
-import json
-import os
-import sys
-import glob
-import time
-import shutil
-import urllib.request
-import re
+from tkinter import ttk, messagebox
+import subprocess, threading, json, os, sys, glob, time, shutil, urllib.request, re
+from pathlib import Path
 
-# ===== 配置 =====
+# ===== 路径 =====
 if getattr(sys, 'frozen', False):
-    SCRIPT_DIR = os.path.dirname(sys.executable)
+    ROOT = Path(sys.executable).parent
 else:
-    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+    ROOT = Path(__file__).parent
+ENV_FILE = ROOT / ".env"
+HOME = Path.home()
 
-ENV_FILE = os.path.join(SCRIPT_DIR, ".env")
-HOME = os.path.expanduser("~")
+# ===== API Key =====
+API_KEY = ""
+if ENV_FILE.exists():
+    for line in ENV_FILE.read_text().splitlines():
+        if line.startswith("DEEPSEEK_API_KEY="):
+            API_KEY = line.split("=", 1)[1].strip()
 
-DEEPSEEK_API_KEY = ""
-if os.path.exists(ENV_FILE):
-    with open(ENV_FILE) as f:
-        for line in f:
-            if line.startswith("DEEPSEEK_API_KEY="):
-                DEEPSEEK_API_KEY = line.strip().split("=", 1)[1]
-
-# ===== 颜色 =====
-C = {
-    "bg": "#1e1e2e",
-    "fg": "#cdd6f4",
-    "accent": "#89b4fa",
-    "green": "#a6e3a1",
-    "yellow": "#f9e2af",
-    "red": "#f38ba8",
-    "surface": "#313244",
-    "text_bg": "#181825",
-    "btn": "#45475a",
-    "btn_h": "#585b70",
+# ===== 主题色 =====
+T = {
+    "bg":       "#0f0f1a",
+    "card":     "#1a1a2e",
+    "surface":  "#16213e",
+    "accent":   "#00d2ff",
+    "accent2":  "#7b2ff7",
+    "green":    "#00e676",
+    "yellow":   "#ffab00",
+    "red":      "#ff1744",
+    "text":     "#e0e0e0",
+    "dim":      "#6b7280",
+    "white":    "#ffffff",
+    "btn":      "#1e3a5f",
+    "btn_h":    "#2a4a7f",
+    "input":    "#0d1b2a",
 }
+
+
+class MarkdownRenderer:
+    """在 tkinter Text widget 中渲染 Markdown"""
+
+    def __init__(self, text_widget):
+        self.tw = text_widget
+        self._setup_tags()
+
+    def _setup_tags(self):
+        self.tw.tag_configure("h1", font=("Microsoft YaHei UI", 18, "bold"), foreground=T["accent"], spacing3=8)
+        self.tw.tag_configure("h2", font=("Microsoft YaHei UI", 14, "bold"), foreground=T["accent2"], spacing3=6)
+        self.tw.tag_configure("h3", font=("Microsoft YaHei UI", 12, "bold"), foreground=T["white"], spacing3=4)
+        self.tw.tag_configure("bold", font=("Microsoft YaHei UI", 10, "bold"))
+        self.tw.tag_configure("code", font=("Consolas", 10), background="#1e1e2e", foreground="#a6e3a1")
+        self.tw.tag_configure("bullet", lmargin1=20, lmargin2=30)
+        self.tw.tag_configure("green", foreground=T["green"])
+        self.tw.tag_configure("yellow", foreground=T["yellow"])
+        self.tw.tag_configure("red", foreground=T["red"])
+        self.tw.tag_configure("accent", foreground=T["accent"])
+        self.tw.tag_configure("dim", foreground=T["dim"])
+        self.tw.tag_configure("line", background="#2a2a4a")
+        self.tw.tag_configure("card", background=T["card"], lmargin1=10, lmargin2=10, rmargin=10)
+
+    def clear(self):
+        self.tw.delete("1.0", "end")
+
+    def render(self, text):
+        """渲染 Markdown 文本"""
+        self.clear()
+        for line in text.split("\n"):
+            stripped = line.strip()
+            if not stripped:
+                self.tw.insert("end", "\n")
+                continue
+            if stripped.startswith("### "):
+                self.tw.insert("end", stripped[4:] + "\n", "h3")
+            elif stripped.startswith("## "):
+                self.tw.insert("end", stripped[3:] + "\n", "h2")
+            elif stripped.startswith("# "):
+                self.tw.insert("end", stripped[2:] + "\n", "h1")
+            elif stripped.startswith("---"):
+                self.tw.insert("end", "─" * 60 + "\n", "line")
+            elif stripped.startswith("- ") or stripped.startswith("* "):
+                self._render_inline("  • " + stripped[2:] + "\n", "bullet")
+            elif stripped.startswith("```"):
+                continue
+            elif stripped.startswith("> "):
+                self.tw.insert("end", "  " + stripped[2:] + "\n", "dim")
+            else:
+                self._render_inline(stripped + "\n")
+
+    def _render_inline(self, text, base_tag=None):
+        """处理行内格式（粗体、代码）"""
+        parts = re.split(r'(\*\*.*?\*\*|`[^`]+`)', text)
+        for part in parts:
+            if part.startswith("**") and part.endswith("**"):
+                self.tw.insert("end", part[2:-2], ("bold", base_tag) if base_tag else ("bold",))
+            elif part.startswith("`") and part.endswith("`"):
+                self.tw.insert("end", part[1:-1], ("code", base_tag) if base_tag else ("code",))
+            else:
+                if base_tag:
+                    self.tw.insert("end", part, base_tag)
+                else:
+                    self.tw.insert("end", part)
+
+    def append(self, text, tag=None):
+        """直接追加文本（非 Markdown）"""
+        self.tw.insert("end", text + "\n", tag or ())
+
+    def append_colored(self, items):
+        """追加带颜色的列表 [(text, tag), ...]"""
+        for text, tag in items:
+            self.tw.insert("end", text + "\n", tag)
+        self.tw.see("end")
 
 
 class ToolBox:
     def __init__(self, root):
         self.root = root
-        self.root.title("电脑维护工具箱 v2.0")
-        self.root.geometry("960x680")
-        self.root.configure(bg=C["bg"])
+        self.root.title("Toolbox - 电脑维护工具箱")
+        self.root.geometry("1024x720")
+        self.root.configure(bg=T["bg"])
+        self.root.minsize(800, 600)
 
-        self._build_header()
-        self._build_body()
-        self._build_status()
+        self._build_ui()
 
-    # ========== UI 构建 ==========
-
-    def _build_header(self):
-        hdr = tk.Frame(self.root, bg=C["accent"], height=48)
+    def _build_ui(self):
+        # ===== 顶部 =====
+        hdr = tk.Frame(self.root, bg=T["accent"], height=56)
         hdr.pack(fill="x")
         hdr.pack_propagate(False)
-        tk.Label(hdr, text="电脑维护工具箱", font=("Microsoft YaHei UI", 15, "bold"),
-                 bg=C["accent"], fg="#1e1e2e").pack(expand=True)
+        inner = tk.Frame(hdr, bg=T["accent"])
+        inner.pack(expand=True, fill="both")
+        tk.Label(inner, text="⚡ Toolbox", font=("Microsoft YaHei UI", 18, "bold"),
+                 bg=T["accent"], fg=T["bg"]).pack(side="left", padx=20)
+        tk.Label(inner, text="电脑维护工具箱 v3.0", font=("Microsoft YaHei UI", 10),
+                 bg=T["accent"], fg=T["bg"]).pack(side="right", padx=20)
 
-    def _build_body(self):
-        body = tk.Frame(self.root, bg=C["bg"])
-        body.pack(fill="both", expand=True, padx=10, pady=10)
+        # ===== 主体 =====
+        body = tk.Frame(self.root, bg=T["bg"])
+        body.pack(fill="both", expand=True, padx=12, pady=12)
+        body.grid_columnconfigure(1, weight=1)
+        body.grid_rowconfigure(0, weight=1)
 
-        # 左侧按钮
-        left = tk.Frame(body, bg=C["bg"], width=190)
-        left.pack(side="left", fill="y", padx=(0, 10))
-        left.pack_propagate(False)
+        # 左侧面板
+        left = tk.Frame(body, bg=T["card"], width=220)
+        left.grid(row=0, column=0, sticky="ns", padx=(0, 12))
+        left.grid_propagate(False)
 
-        btns = [
-            ("查看电脑状态", self._do_status),
-            ("清理垃圾文件", self._do_clean),
-            ("查看磁盘空间", self._do_disk),
-            ("清理 Claude 缓存", self._do_claude),
-            ("AI 诊断与清理", self._do_ai),
+        tk.Label(left, text="功能", font=("Microsoft YaHei UI", 11, "bold"),
+                 bg=T["card"], fg=T["dim"], anchor="w").pack(fill="x", padx=16, pady=(16, 8))
+
+        buttons = [
+            ("📊  电脑状态",     self._do_status),
+            ("🧹  清理垃圾",     self._do_clean),
+            ("💾  磁盘空间",     self._do_disk),
+            ("🤖  Claude 缓存",  self._do_claude),
+            ("🧠  AI 诊断清理",  self._do_ai),
         ]
-        for txt, cmd in btns:
+        self._buttons = []
+        for txt, cmd in buttons:
             b = tk.Button(left, text=txt, font=("Microsoft YaHei UI", 11),
-                          bg=C["btn"], fg=C["fg"], activebackground=C["btn_h"],
-                          activeforeground=C["fg"], relief="flat", cursor="hand2",
-                          anchor="w", padx=12, pady=8, command=cmd)
-            b.pack(fill="x", pady=2)
-            b.bind("<Enter>", lambda e, b=b: b.configure(bg=C["btn_h"]))
-            b.bind("<Leave>", lambda e, b=b: b.configure(bg=C["btn"]))
+                          bg=T["btn"], fg=T["text"], activebackground=T["btn_h"],
+                          activeforeground=T["white"], relief="flat", cursor="hand2",
+                          anchor="w", padx=16, pady=10, command=cmd)
+            b.pack(fill="x", padx=10, pady=3)
+            b.bind("<Enter>", lambda e, b=b: b.configure(bg=T["btn_h"]))
+            b.bind("<Leave>", lambda e, b=b: b.configure(bg=T["btn"]))
+            self._buttons.append(b)
 
-        # 右侧输出
-        right = tk.Frame(body, bg=C["surface"])
-        right.pack(side="right", fill="both", expand=True)
+        # 右侧内容区
+        right = tk.Frame(body, bg=T["card"])
+        right.grid(row=0, column=1, sticky="nsew")
+        right.grid_rowconfigure(1, weight=1)
+        right.grid_columnconfigure(0, weight=1)
 
-        self.title_lbl = tk.Label(right, text="就绪", font=("Microsoft YaHei UI", 12, "bold"),
-                                   bg=C["surface"], fg=C["accent"], anchor="w")
-        self.title_lbl.pack(fill="x", padx=10, pady=(10, 5))
+        # 标题栏
+        self.title_bar = tk.Frame(right, bg=T["surface"], height=44)
+        self.title_bar.grid(row=0, column=0, sticky="ew")
+        self.title_bar.pack_propagate(False)
+        self.title_lbl = tk.Label(self.title_bar, text="就绪", font=("Microsoft YaHei UI", 12, "bold"),
+                                   bg=T["surface"], fg=T["accent"], anchor="w")
+        self.title_lbl.pack(side="left", padx=16)
 
-        self.out = scrolledtext.ScrolledText(right, font=("Microsoft YaHei UI", 10),
-                                              bg=C["text_bg"], fg=C["fg"],
-                                              insertbackground=C["fg"],
-                                              relief="flat", wrap="word")
-        self.out.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-        self.out.tag_configure("g", foreground=C["green"])
-        self.out.tag_configure("y", foreground=C["yellow"])
-        self.out.tag_configure("r", foreground=C["red"])
-        self.out.tag_configure("a", foreground=C["accent"])
-        self.out.tag_configure("b", font=("Microsoft YaHei UI", 10, "bold"))
+        # 内容区（Markdown 渲染）
+        content = tk.Frame(right, bg=T["bg"])
+        content.grid(row=1, column=0, sticky="nsew", padx=2, pady=2)
+        content.grid_rowconfigure(0, weight=1)
+        content.grid_columnconfigure(0, weight=1)
 
-    def _build_status(self):
-        bar = tk.Frame(self.root, bg=C["surface"], height=24)
+        self.text = tk.Text(content, font=("Microsoft YaHei UI", 10),
+                            bg=T["bg"], fg=T["text"], insertbackground=T["accent"],
+                            relief="flat", wrap="word", padx=16, pady=12,
+                            selectbackground=T["accent2"], selectforeground=T["white"])
+        self.text.grid(row=0, column=0, sticky="nsew")
+
+        scrollbar = tk.Scrollbar(content, command=self.text.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        self.text.configure(yscrollcommand=scrollbar.set)
+
+        self.md = MarkdownRenderer(self.text)
+
+        # ===== 底部 =====
+        bar = tk.Frame(self.root, bg=T["surface"], height=28)
         bar.pack(fill="x", side="bottom")
         bar.pack_propagate(False)
-        self.status = tk.Label(bar, text="就绪", font=("Microsoft YaHei UI", 9),
-                                bg=C["surface"], fg=C["fg"], anchor="w", padx=10)
-        self.status.pack(fill="both")
+        self.status_lbl = tk.Label(bar, text="就绪", font=("Microsoft YaHei UI", 9),
+                                    bg=T["surface"], fg=T["dim"], anchor="w", padx=16)
+        self.status_lbl.pack(fill="both")
 
-    # ========== 工具方法 ==========
+        # 初始内容
+        self.md.render("""# 欢迎使用 Toolbox
 
-    def _set_status(self, t):
-        self.status.configure(text=t)
+选择左侧功能开始使用。
+
+## 功能说明
+
+- **电脑状态** — 检测开发工具、服务、磁盘使用率
+- **清理垃圾** — 清理日志、临时文件、过时缓存
+- **磁盘空间** — 查看各盘使用情况
+- **Claude 缓存** — 清理 Claude Code 的缓存文件
+- **AI 诊断清理** — DeepSeek V4 Pro 全量扫描 + 智能分级清理
+
+---
+
+> 提示：AI 功能需要配置 DeepSeek API Key（.env 文件）
+""")
+
+    # ===== 工具方法 =====
 
     def _set_title(self, t):
         self.title_lbl.configure(text=t)
 
-    def _clear(self):
-        self.out.delete("1.0", "end")
-
-    def _put(self, text, tag=None):
-        self.out.insert("end", text + "\n", tag or ())
-        self.out.see("end")
+    def _set_status(self, t):
+        self.status_lbl.configure(text=t)
 
     def _cmd(self, c):
         try:
@@ -140,310 +244,362 @@ class ToolBox:
         except:
             return ""
 
-    def _disk_menu(self, callback):
-        """弹出磁盘选择菜单"""
-        win = tk.Toplevel(self.root)
-        win.title("选择磁盘")
-        win.geometry("320x280")
-        win.configure(bg=C["bg"])
-        win.resizable(False, False)
-        win.grab_set()
-
-        tk.Label(win, text="选择要扫描的磁盘", font=("Microsoft YaHei UI", 12, "bold"),
-                 bg=C["bg"], fg=C["accent"]).pack(pady=(15, 10))
-
-        # 获取磁盘列表 (Windows Git Bash: "D:  220G  160G  61G  73% /d")
-        df_out = self._cmd("df -h 2>/dev/null | grep -iE '^[C-F]:'")
-        disks = []
-        for line in df_out.split("\n"):
-            parts = line.split()
-            if len(parts) >= 6:
-                drive = parts[0]   # D:
-                total = parts[1]   # 220G
-                avail = parts[3]   # 61G
-                pct = parts[4].replace("%", "")  # 73
-                disks.append((drive, total, avail, pct))
-
-        var = tk.StringVar(value="all")
-        for drive, total, avail, pct in disks:
-            tag = f"  ({pct}% 已用, 可用 {avail})"
-            tk.Radiobutton(win, text=f"{drive}  总计 {total}{tag}", variable=var, value=drive,
-                           font=("Microsoft YaHei UI", 10), bg=C["bg"], fg=C["fg"],
-                           selectcolor=C["surface"], activebackground=C["bg"],
-                           activeforeground=C["accent"]).pack(anchor="w", padx=30, pady=2)
-
-        tk.Radiobutton(win, text="全部磁盘", variable=var, value="all",
-                       font=("Microsoft YaHei UI", 10, "bold"), bg=C["bg"], fg=C["accent"],
-                       selectcolor=C["surface"], activebackground=C["bg"]).pack(anchor="w", padx=30, pady=(8, 2))
-
-        def confirm():
-            win.destroy()
-            callback(var.get())
-
-        tk.Button(win, text="开始扫描", font=("Microsoft YaHei UI", 11),
-                  bg=C["accent"], fg="#1e1e2e", relief="flat", cursor="hand2",
-                  padx=20, pady=6, command=confirm).pack(pady=15)
-
-    # ========== 功能实现 ==========
+    # ===== 功能：电脑状态 =====
 
     def _do_status(self):
-        self._set_title("查看电脑状态")
-        self._clear()
+        self._set_title("📊 电脑状态")
         self._set_status("正在检测...")
 
         def work():
+            lines = ["# 电脑状态\n"]
+
+            # 开发工具
+            lines.append("## 开发工具\n")
             tools = [
-                ("Git", "git --version"),
-                ("Node.js", "node --version"),
-                ("npm", "npm --version"),
-                ("Python", "python --version"),
-                ("Java", "java -version 2>&1"),
-                ("Docker", "docker --version"),
-                ("Conda", "conda --version"),
-                ("VS Code", "code --version 2>/dev/null | head -1"),
-                ("Bun", "bun --version"),
-                ("Ollama", "ollama --version 2>/dev/null"),
+                ("Git", "git --version"), ("Node.js", "node --version"),
+                ("npm", "npm --version"), ("Python", "python --version"),
+                ("Java", "java -version 2>&1"), ("Docker", "docker --version"),
+                ("Conda", "conda --version"), ("VS Code", "code --version 2>/dev/null | head -1"),
+                ("Bun", "bun --version"), ("Ollama", "ollama --version 2>/dev/null"),
             ]
-            self.root.after(0, lambda: self._put("开发工具", "b"))
             for name, cmd in tools:
                 out = self._cmd(cmd).split("\n")[0]
                 if out and "not found" not in out.lower():
-                    self.root.after(0, lambda n=name, o=out: self._put(f"  OK {n}  ->  {o}", "g"))
+                    lines.append(f"- ✅ **{name}** — `{out}`")
                 else:
-                    self.root.after(0, lambda n=name: self._put(f"  -- {n}  ->  未安装", "y"))
+                    lines.append(f"- ❌ **{name}** — 未安装")
+            lines.append("")
 
-            self.root.after(0, lambda: self._put(""))
-            self.root.after(0, lambda: self._put("服务状态", "b"))
+            # 服务
+            lines.append("## 服务状态\n")
             docker_ok = "Server:" in self._cmd("docker info 2>&1")
-            self.root.after(0, lambda: self._put(
-                f"  {'运行中' if docker_ok else '未运行'}  Docker Engine", "g" if docker_ok else "y"))
-            ollama_ok = self._cmd("curl -s http://localhost:11434/api/tags 2>/dev/null")
-            self.root.after(0, lambda: self._put(
-                f"  {'运行中' if ollama_ok else '未运行'}  Ollama Server", "g" if ollama_ok else "y"))
+            lines.append(f"- {'🟢' if docker_ok else '🔴'} **Docker Engine** — {'运行中' if docker_ok else '未运行'}")
+            ollama_ok = bool(self._cmd("curl -s http://localhost:11434/api/tags 2>/dev/null"))
+            lines.append(f"- {'🟢' if ollama_ok else '🔴'} **Ollama Server** — {'运行中' if ollama_ok else '未运行'}")
+            lines.append("")
 
-            self.root.after(0, lambda: self._put(""))
-            self.root.after(0, lambda: self._put("磁盘使用率", "b"))
+            # 磁盘
+            lines.append("## 磁盘使用率\n")
+            lines.append("| 盘符 | 总容量 | 已用 | 可用 | 使用率 | 状态 |")
+            lines.append("|------|--------|------|------|--------|------|")
             df_out = self._cmd("df -h 2>/dev/null | grep -iE '^[C-F]:'")
             for line in df_out.split("\n"):
                 parts = line.split()
                 if len(parts) >= 6:
                     drive, total, used, avail = parts[0], parts[1], parts[2], parts[3]
                     pct = int(parts[4].replace("%", ""))
-                    tag = "r" if pct >= 90 else ("y" if pct >= 75 else "g")
-                    self.root.after(0, lambda d=drive, t=total, u=used, a=avail, p=pct, tg=tag:
-                                    self._put(f"  {d}  总计 {t}  已用 {u}  可用 {a}  {p}%", tg))
+                    if pct >= 90: status = "🔴 危险"
+                    elif pct >= 75: status = "🟡 注意"
+                    else: status = "🟢 正常"
+                    lines.append(f"| {drive} | {total} | {used} | {avail} | {pct}% | {status} |")
 
+            self.root.after(0, lambda: self.md.render("\n".join(lines)))
             self.root.after(0, lambda: self._set_status("检测完成"))
 
         threading.Thread(target=work, daemon=True).start()
 
+    # ===== 功能：清理垃圾 =====
+
     def _do_clean(self):
-        if not messagebox.askyesno("确认", "将清理以下内容：\n\n- PyCharm 错误日志\n- JMeter / Mumu 日志\n- 过时安装脚本\n- 7天前临时文件\n- Claude 缓存\n\n确定继续？"):
+        if not messagebox.askyesno("确认清理", "将清理以下内容：\n\n• PyCharm 错误日志\n• JMeter / Mumu 日志\n• 过时安装脚本\n• 7天前临时文件\n• Claude 缓存\n\n确定继续？"):
             return
 
-        self._set_title("清理垃圾文件")
-        self._clear()
+        self._set_title("🧹 清理垃圾")
         self._set_status("正在清理...")
 
         def work():
+            lines = ["# 清理结果\n"]
             count = 0
-            for f in glob.glob(os.path.join(HOME, "java_error_in_pycharm64_*.log")):
+
+            # 日志
+            lines.append("## 日志文件\n")
+            for f in glob.glob(str(HOME / "java_error_in_pycharm64_*.log")):
                 os.remove(f)
-                self.root.after(0, lambda n=os.path.basename(f): self._put(f"  已删除 {n}", "g"))
+                lines.append(f"- ✅ 已删除 `{Path(f).name}`")
                 count += 1
-
             for name in ["jmeter.log", "mumu_boot.txt", "msfinstall"]:
-                p = os.path.join(HOME, name)
-                if os.path.exists(p):
+                p = HOME / name
+                if p.exists():
                     os.remove(p)
-                    self.root.after(0, lambda n=name: self._put(f"  已删除 {n}", "g"))
+                    lines.append(f"- ✅ 已删除 `{name}`")
                     count += 1
+            lines.append("")
 
-            for d in ["paste-cache", "shell-snapshots", "telemetry"]:
-                p = os.path.join(HOME, ".claude", d)
-                if os.path.exists(p):
+            # Claude 缓存
+            lines.append("## Claude 缓存\n")
+            for d in ["telemetry", "paste-cache", "shell-snapshots"]:
+                p = HOME / ".claude" / d
+                if p.exists():
+                    files = list(p.iterdir())
                     shutil.rmtree(p, ignore_errors=True)
-                    self.root.after(0, lambda n=d: self._put(f"  已清理 .claude/{n}", "g"))
+                    lines.append(f"- ✅ 已清理 `.claude/{d}` ({len(files)} 个文件)")
                     count += 1
+            lines.append("")
 
-            temp_dir = os.path.join(HOME, "AppData", "Local", "Temp")
-            if os.path.exists(temp_dir):
+            # Temp
+            lines.append("## 临时文件\n")
+            temp_dir = HOME / "AppData" / "Local" / "Temp"
+            if temp_dir.exists():
                 now = time.time()
                 tc = 0
-                for f in glob.glob(os.path.join(temp_dir, "*")):
+                for f in temp_dir.iterdir():
                     try:
-                        if os.path.isfile(f) and (now - os.path.getmtime(f)) > 7 * 86400:
-                            os.remove(f)
+                        if f.is_file() and (now - f.stat().st_mtime) > 7 * 86400:
+                            f.unlink()
                             tc += 1
                     except:
                         pass
                 if tc:
-                    self.root.after(0, lambda c=tc: self._put(f"  已清理 {c} 个临时文件", "g"))
+                    lines.append(f"- ✅ 已清理 {tc} 个 7 天前的临时文件")
                     count += 1
+                else:
+                    lines.append("- ℹ️ 没有需要清理的临时文件")
 
-            self.root.after(0, lambda: self._put(f"\n清理完成，共 {count} 项", "a"))
+            lines.append(f"\n---\n\n**清理完成，共处理 {count} 项**")
+
+            self.root.after(0, lambda: self.md.render("\n".join(lines)))
             self.root.after(0, lambda: self._set_status("清理完成"))
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _do_disk(self):
-        self._set_title("查看磁盘空间")
-        self._clear()
+    # ===== 功能：磁盘空间 =====
 
-        df_out = self._cmd("df -h 2>/dev/null | grep -iE '^C:|^D:|^E:|^F:'")
-        self._put("分区使用率\n", "b")
+    def _do_disk(self):
+        self._set_title("💾 磁盘空间")
+        lines = ["# 磁盘空间\n"]
+        lines.append("| 盘符 | 总容量 | 已用 | 可用 | 使用率 | 状态 |")
+        lines.append("|------|--------|------|------|--------|------|")
+        df_out = self._cmd("df -h 2>/dev/null | grep -iE '^[C-F]:'")
         for line in df_out.split("\n"):
             parts = line.split()
             if len(parts) >= 6:
                 drive, total, used, avail = parts[0], parts[1], parts[2], parts[3]
                 pct = int(parts[4].replace("%", ""))
-                tag = "r" if pct >= 90 else ("y" if pct >= 75 else "g")
-                self._put(f"  {drive}  总计 {total}  已用 {used}  可用 {avail}  {pct}%", tag)
+                if pct >= 90: status = "🔴 危险"
+                elif pct >= 75: status = "🟡 注意"
+                else: status = "🟢 正常"
+                lines.append(f"| {drive} | {total} | {used} | {avail} | {pct}% | {status} |")
 
-        self._put("\n  红色 = 快满 (>90%)  黄色 = 注意 (>75%)  绿色 = 正常", "a")
+        lines.append("\n---\n")
+        lines.append("> 🔴 红色 = 快满 (>90%)  🟡 黄色 = 注意 (>75%)  🟢 绿色 = 正常")
+
+        self.md.render("\n".join(lines))
         self._set_status("扫描完成")
+
+    # ===== 功能：Claude 缓存 =====
 
     def _do_claude(self):
         if not messagebox.askyesno("确认", "将清理 Claude 的遥测、快照和粘贴缓存。\n\n确定？"):
             return
-        self._set_title("清理 Claude 缓存")
-        self._clear()
+        self._set_title("🤖 Claude 缓存")
+        lines = ["# Claude 缓存清理\n"]
         for d in ["telemetry", "paste-cache", "shell-snapshots"]:
-            p = os.path.join(HOME, ".claude", d)
-            if os.path.exists(p):
-                c = len(os.listdir(p))
+            p = HOME / ".claude" / d
+            if p.exists():
+                c = len(list(p.iterdir()))
                 shutil.rmtree(p, ignore_errors=True)
-                self._put(f"  已清理 {d} ({c} 个文件)", "g")
-        self._put("\n完成", "a")
+                lines.append(f"- ✅ 已清理 `{d}` ({c} 个文件)")
+        lines.append("\n---\n\n**清理完成**")
+        self.md.render("\n".join(lines))
+
+    # ===== 功能：AI 诊断清理 =====
 
     def _do_ai(self):
-        if not DEEPSEEK_API_KEY:
-            messagebox.showerror("错误", "未配置 DeepSeek API Key\n请在 .env 中设置 DEEPSEEK_API_KEY")
+        if not API_KEY:
+            messagebox.showerror("错误", "未配置 DeepSeek API Key\n\n请在 F:\\Toolbox\\.env 中设置：\nDEEPSEEK_API_KEY=your_key")
             return
-        self._disk_menu(self._run_ai)
+        self._show_disk_selector()
 
-    def _run_ai(self, disk_choice):
-        self._set_title("AI 诊断与清理")
-        self._clear()
-        self._set_status("正在扫描...")
+    def _show_disk_selector(self):
+        """磁盘选择窗口"""
+        win = tk.Toplevel(self.root)
+        win.title("选择扫描磁盘")
+        win.geometry("400x350")
+        win.configure(bg=T["bg"])
+        win.resizable(False, False)
+        win.grab_set()
+
+        tk.Label(win, text="选择要扫描的磁盘", font=("Microsoft YaHei UI", 14, "bold"),
+                 bg=T["bg"], fg=T["accent"]).pack(pady=(20, 15))
+
+        # 获取磁盘
+        df_out = self._cmd("df -h 2>/dev/null | grep -iE '^[C-F]:'")
+        disks = []
+        for line in df_out.split("\n"):
+            parts = line.split()
+            if len(parts) >= 6:
+                drive, total, used, avail = parts[0], parts[1], parts[2], parts[3]
+                pct = int(parts[4].replace("%", ""))
+                disks.append((drive, total, used, avail, pct))
+
+        var = tk.StringVar(value="all")
+
+        frame = tk.Frame(win, bg=T["card"], relief="flat")
+        frame.pack(fill="x", padx=20, pady=(0, 15))
+
+        for drive, total, used, avail, pct in disks:
+            color = T["red"] if pct >= 90 else (T["yellow"] if pct >= 75 else T["green"])
+            f = tk.Frame(frame, bg=T["card"])
+            f.pack(fill="x", padx=12, pady=4)
+            tk.Radiobutton(f, text="", variable=var, value=drive,
+                           bg=T["card"], selectcolor=T["surface"],
+                           activebackground=T["card"]).pack(side="left")
+            tk.Label(f, text=f"{drive}  {total}  已用 {used}  ({pct}%)",
+                     font=("Microsoft YaHei UI", 10), bg=T["card"], fg=color).pack(side="left", padx=8)
+
+        f_all = tk.Frame(frame, bg=T["card"])
+        f_all.pack(fill="x", padx=12, pady=(8, 4))
+        tk.Radiobutton(f_all, text="", variable=var, value="all",
+                       bg=T["card"], selectcolor=T["surface"],
+                       activebackground=T["card"]).pack(side="left")
+        tk.Label(f_all, text="全部磁盘", font=("Microsoft YaHei UI", 10, "bold"),
+                 bg=T["card"], fg=T["accent"]).pack(side="left", padx=8)
+
+        def start():
+            win.destroy()
+            self._run_ai_scan(var.get())
+
+        tk.Button(win, text="开始扫描", font=("Microsoft YaHei UI", 12, "bold"),
+                  bg=T["accent"], fg=T["bg"], relief="flat", cursor="hand2",
+                  padx=30, pady=8, command=start).pack(pady=10)
+
+    def _run_ai_scan(self, disk_choice):
+        """AI 全量扫描"""
+        self._set_title("🧠 AI 诊断清理")
+        self._set_status("正在全量扫描...")
+        self.md.clear()
+        self.md.render("# 正在扫描...\n\n请耐心等待，全量扫描可能需要 1-2 分钟。")
 
         def work():
             # ===== 全量扫描 =====
-            self.root.after(0, lambda: self._put("正在扫描系统，请耐心等待...\n", "a"))
-
-            # 磁盘信息
-            if disk_choice == "all":
-                disk_info = self._cmd("df -h 2>/dev/null | grep -iE '^C:|^D:|^E:|^F:'")
-            else:
-                disk_info = self._cmd(f"df -h 2>/dev/null | grep -iE '^{disk_choice}'")
-
-            # 开发环境
-            dev_lines = []
-            for name, cmd in [
-                ("Git", "git --version"), ("Node.js", "node --version"),
-                ("npm", "npm --version"), ("Python", "python --version"),
-                ("Java", "java -version 2>&1"), ("Docker", "docker --version"),
-                ("Conda", "conda --version"), ("VS Code", "code --version 2>/dev/null | head -1"),
-                ("Bun", "bun --version"), ("Ollama", "ollama --version 2>/dev/null"),
-            ]:
-                out = self._cmd(cmd).split("\n")[0]
-                dev_lines.append(f"{name}: {out if out else '未安装'}")
-            dev_info = "\n".join(dev_lines)
-
-            # 扫描可清理项（全量）
             scan_lines = []
 
             # 1. 用户目录日志
-            for f in glob.glob(os.path.join(HOME, "java_error_in_pycharm64_*.log")):
-                scan_lines.append(f"LOG | {os.path.basename(f)} | {os.path.getsize(f)//1024}KB | {f}")
+            for f in HOME.glob("java_error_in_pycharm64_*.log"):
+                scan_lines.append(f"LOG | {f.name} | {f.stat().st_size//1024}KB | {f}")
             for name in ["jmeter.log", "mumu_boot.txt"]:
-                p = os.path.join(HOME, name)
-                if os.path.exists(p):
-                    scan_lines.append(f"LOG | {name} | {os.path.getsize(p)//1024}KB | {p}")
+                p = HOME / name
+                if p.exists():
+                    scan_lines.append(f"LOG | {name} | {p.stat().st_size//1024}KB | {p}")
 
             # 2. 过时安装脚本
             for name in ["msfinstall"]:
-                p = os.path.join(HOME, name)
-                if os.path.exists(p):
-                    scan_lines.append(f"LOG | {name} | {os.path.getsize(p)//1024}KB | {p}")
+                p = HOME / name
+                if p.exists():
+                    scan_lines.append(f"SCRIPT | {name} | {p.stat().st_size//1024}KB | {p}")
 
             # 3. Claude 缓存
             for d_name in ["telemetry", "paste-cache", "shell-snapshots"]:
-                d = os.path.join(HOME, ".claude", d_name)
-                if os.path.exists(d):
-                    files = [f for f in os.listdir(d) if os.path.isfile(os.path.join(d, f))]
+                d = HOME / ".claude" / d_name
+                if d.exists():
+                    files = [f for f in d.iterdir() if f.is_file()]
                     if files:
-                        total = sum(os.path.getsize(os.path.join(d, f)) for f in files)
+                        total = sum(f.stat().st_size for f in files)
                         scan_lines.append(f"CACHE | .claude/{d_name} ({len(files)}个) | {total//1024}KB | {d}")
 
             # 4. Temp 目录
-            temp_dir = os.path.join(HOME, "AppData", "Local", "Temp")
-            if os.path.exists(temp_dir):
+            temp_dir = HOME / "AppData" / "Local" / "Temp"
+            if temp_dir.exists():
                 now = time.time()
-                old_files = []
-                for f in glob.glob(os.path.join(temp_dir, "*")):
-                    try:
-                        if os.path.isfile(f) and (now - os.path.getmtime(f)) > 7 * 86400:
-                            old_files.append(f)
-                    except:
-                        pass
-                if old_files:
-                    total = sum(os.path.getsize(f) for f in old_files if os.path.isfile(f))
-                    scan_lines.append(f"CACHE | Temp 7天前文件 ({len(old_files)}个) | {total//1024}KB | {temp_dir}")
+                old = [f for f in temp_dir.iterdir() if f.is_file() and (now - f.stat().st_mtime) > 7*86400]
+                if old:
+                    total = sum(f.stat().st_size for f in old)
+                    scan_lines.append(f"CACHE | Temp 7天前 ({len(old)}个) | {total//1024}KB | {temp_dir}")
 
-            # 5. npm/pip/conda 缓存
-            for name, path in [
-                ("npm 缓存", os.path.join(HOME, ".npm")),
-                ("pip 缓存", os.path.join(HOME, ".cache", "pip")),
-                ("conda 缓存", os.path.join(HOME, ".conda", "pkgs")),
-                ("Gradle 缓存", os.path.join(HOME, ".gradle", "caches")),
-                ("Maven 缓存", os.path.join(HOME, ".m2", "repository")),
-            ]:
-                if os.path.exists(path):
+            # 5. 开发缓存（全量）
+            dev_caches = [
+                ("npm 缓存", HOME / ".npm"),
+                ("pip 缓存", HOME / ".cache" / "pip"),
+                ("conda 缓存", HOME / ".conda" / "pkgs"),
+                ("Gradle 缓存", HOME / ".gradle" / "caches"),
+                ("Maven 缓存", HOME / ".m2" / "repository"),
+                ("yarn 缓存", HOME / ".cache" / "yarn"),
+                ("pnpm 缓存", HOME / ".local" / "share" / "pnpm"),
+                ("Cargo 缓存", HOME / ".cargo" / "registry"),
+                ("Go 缓存", HOME / "go" / "pkg"),
+                (".cache 通用", HOME / ".cache"),
+            ]
+            for name, path in dev_caches:
+                if path.exists():
                     try:
-                        total = sum(os.path.getsize(os.path.join(dp, f)) for dp, _, files in os.walk(path) for f in files)
-                        if total > 1024 * 1024:  # > 1MB
-                            scan_lines.append(f"CACHE | {name} | {total//(1024*1024)}MB | {path}")
+                        total = sum(f.stat().st_size for dp, _, files in os.walk(path) for f in [Path(dp) / fn for fn in files] if f.exists())
+                        if total > 1024 * 1024:
+                            scan_lines.append(f"DEV_CACHE | {name} | {total//(1024*1024)}MB | {path}")
                     except:
                         pass
 
             # 6. 根目录 node_modules
-            nm = os.path.join(HOME, "node_modules")
-            if os.path.exists(nm):
+            nm = HOME / "node_modules"
+            if nm.exists():
                 try:
-                    total = sum(os.path.getsize(os.path.join(dp, f)) for dp, _, files in os.walk(nm) for f in files)
-                    scan_lines.append(f"CACHE | 根目录 node_modules | {total//(1024*1024)}MB | {nm}")
+                    total = sum(f.stat().st_size for dp, _, files in os.walk(nm) for f in [Path(dp) / fn for fn in files] if f.exists())
+                    scan_lines.append(f"DEV_CACHE | 根目录 node_modules | {total//(1024*1024)}MB | {nm}")
                 except:
                     pass
 
-            # 7. Docker 相关
-            docker_dir = os.path.join(HOME, ".docker")
-            if os.path.exists(docker_dir):
+            # 7. Docker
+            docker_dir = HOME / ".docker"
+            if docker_dir.exists():
                 try:
-                    total = sum(os.path.getsize(os.path.join(dp, f)) for dp, _, files in os.walk(docker_dir) for f in files)
-                    if total > 1024 * 1024:
-                        scan_lines.append(f"CACHE | .docker 配置/缓存 | {total//(1024*1024)}MB | {docker_dir}")
+                    total = sum(f.stat().st_size for dp, _, files in os.walk(docker_dir) for f in [Path(dp) / fn for fn in files] if f.exists())
+                    if total > 1024*1024:
+                        scan_lines.append(f"DOCKER | .docker 配置 | {total//(1024*1024)}MB | {docker_dir}")
                 except:
                     pass
 
-            # 8. Downloads 中的安装包
-            dl_dir = os.path.join(HOME, "Downloads")
-            if os.path.exists(dl_dir):
-                installers = []
-                for f in os.listdir(dl_dir):
-                    if f.lower().endswith(('.exe', '.msi', '.zip', '.rar', '.7z', '.iso')):
-                        fp = os.path.join(dl_dir, f)
-                        if os.path.isfile(fp):
-                            installers.append((f, os.path.getsize(fp)))
+            # 8. Downloads 安装包
+            dl_dir = HOME / "Downloads"
+            if dl_dir.exists():
+                installers = [(f.name, f.stat().st_size) for f in dl_dir.iterdir()
+                              if f.is_file() and f.suffix.lower() in ('.exe', '.msi', '.zip', '.rar', '.7z', '.iso', '.tar.gz')]
                 if installers:
                     total = sum(s for _, s in installers)
-                    scan_lines.append(f"CACHE | Downloads 安装包 ({len(installers)}个) | {total//(1024*1024)}MB | {dl_dir}")
+                    scan_lines.append(f"INSTALLER | Downloads 安装包 ({len(installers)}个) | {total//(1024*1024)}MB | {dl_dir}")
+
+            # 9. 回收站
+            recycle = Path("C:/$Recycle.Bin")
+            if recycle.exists():
+                try:
+                    total = sum(f.stat().st_size for dp, _, files in os.walk(recycle) for f in [Path(dp) / fn for fn in files] if f.exists())
+                    if total > 1024*1024:
+                        scan_lines.append(f"RECYCLE | 回收站 | {total//(1024*1024)}MB | {recycle}")
+                except:
+                    pass
+
+            # 10. Windows Update 缓存
+            wu_cache = Path("C:/Windows/SoftwareDistribution/Download")
+            if wu_cache.exists():
+                try:
+                    total = sum(f.stat().st_size for dp, _, files in os.walk(wu_cache) for f in [Path(dp) / fn for fn in files] if f.exists())
+                    if total > 1024*1024:
+                        scan_lines.append(f"SYSTEM | Windows Update 缓存 | {total//(1024*1024)}MB | {wu_cache}")
+                except:
+                    pass
+
+            # 11. 浏览器缓存
+            browser_caches = [
+                ("Chrome 缓存", HOME / "AppData/Local/Google/Chrome/User Data/Default/Cache"),
+                ("Edge 缓存", HOME / "AppData/Local/Microsoft/Edge/User Data/Default/Cache"),
+                ("Firefox 缓存", HOME / "AppData/Local/Mozilla/Firefox/Profiles"),
+            ]
+            for name, path in browser_caches:
+                if path.exists():
+                    try:
+                        total = sum(f.stat().st_size for dp, _, files in os.walk(path) for f in [Path(dp) / fn for fn in files] if f.exists())
+                        if total > 1024*1024:
+                            scan_lines.append(f"BROWSER | {name} | {total//(1024*1024)}MB | {path}")
+                    except:
+                        pass
+
+            # 磁盘信息
+            if disk_choice == "all":
+                disk_info = self._cmd("df -h 2>/dev/null | grep -iE '^[C-F]:'")
+            else:
+                disk_info = self._cmd(f"df -h 2>/dev/null | grep '{disk_choice}'")
 
             scan_text = "\n".join(scan_lines) if scan_lines else "未发现可清理项目"
 
-            self.root.after(0, lambda: self._put(f"扫描完成，发现 {len(scan_lines)} 类可清理项\n", "g"))
-            self.root.after(0, lambda: self._put("正在请求 AI 分析（可能需要 30-60 秒）...\n", "a"))
-            self._set_status("正在请求 DeepSeek V4 Pro 分析...")
+            self.root.after(0, lambda: self._set_status(f"扫描完成，发现 {len(scan_lines)} 类可清理项，正在请求 AI 分析..."))
 
             # ===== AI 分析 =====
             prompt = f"""你是 Windows 系统存储分析专家。请分析以下数据，给出清理建议。
@@ -451,26 +607,11 @@ class ToolBox:
 ## 磁盘使用
 {disk_info}
 
-## 开发环境
-{dev_info}
-
 ## 扫描到的可清理项（类型 | 名称 | 大小 | 路径）
 {scan_text}
 
 请按以下 JSON 格式输出（不要输出其他内容）：
-{chr(123)}
-  "summary": "一句话总览",
-  "green": [
-    {chr(123)}"name": "名称", "size": "大小", "path": "路径", "cmd": "清理命令", "note": "说明"{chr(125)}
-  ],
-  "yellow": [
-    {chr(123)}"name": "名称", "size": "大小", "path": "路径", "reason": "需判断原因"{chr(125)}
-  ],
-  "red": [
-    {chr(123)}"name": "名称", "size": "大小", "reason": "不建议原因"{chr(125)}
-  ],
-  "advice": "其他优化建议"
-{chr(125)}
+{{"summary": "一句话总览", "green": [{{"name": "名称", "size": "大小", "path": "路径", "cmd": "清理命令", "note": "说明"}}], "yellow": [{{"name": "名称", "size": "大小", "path": "路径", "reason": "需判断原因"}}], "red": [{{"name": "名称", "size": "大小", "reason": "不建议原因"}}], "advice": "其他优化建议"}}
 
 规则：
 - green: 纯缓存/临时文件/日志，删了不影响功能，必须给出可执行命令
@@ -493,95 +634,88 @@ class ToolBox:
                 req = urllib.request.Request(
                     "https://api.deepseek.com/v1/chat/completions",
                     data=data,
-                    headers={
-                        "Content-Type": "application/json",
-                        "Authorization": f"Bearer {DEEPSEEK_API_KEY}"
-                    }
+                    headers={"Content-Type": "application/json", "Authorization": f"Bearer {API_KEY}"}
                 )
 
                 with urllib.request.urlopen(req, timeout=180) as resp:
                     r = json.loads(resp.read().decode("utf-8"))
                     content = r["choices"][0]["message"]["content"]
 
-                    # 提取 JSON
                     m = re.search(r'```json\s*(.*?)\s*```', content, re.DOTALL)
-                    if m:
-                        json_str = m.group(1)
-                    else:
-                        m = re.search(r'\{.*\}', content, re.DOTALL)
-                        json_str = m.group(0) if m else "{}"
-
+                    json_str = m.group(1) if m else (re.search(r'\{.*\}', content, re.DOTALL).group(0) if re.search(r'\{.*\}', content, re.DOTALL) else "{}")
                     result = json.loads(json_str)
 
-                    # 展示
-                    self.root.after(0, lambda: self._put(f"总览：{result.get('summary', '')}\n", "a"))
+                    # 渲染 Markdown 报告
+                    md_lines = ["# AI 诊断报告\n"]
+                    md_lines.append(f"> {result.get('summary', '')}\n")
 
                     greens = result.get("green", [])
                     yellows = result.get("yellow", [])
                     reds = result.get("red", [])
 
                     if greens:
-                        self.root.after(0, lambda: self._put("可自动清理（安全删除）：", "g"))
+                        md_lines.append("## 🟢 可自动清理\n")
                         for i, item in enumerate(greens, 1):
-                            self.root.after(0, lambda i=i, it=item:
-                                            self._put(f"  [{i}] {it['name']}  {it['size']}"))
-                            self.root.after(0, lambda it=item:
-                                            self._put(f"       命令: {it.get('cmd', '无')}"))
+                            md_lines.append(f"### {i}. {item['name']}  ({item['size']})")
+                            md_lines.append(f"- 路径: `{item['path']}`")
+                            md_lines.append(f"- 命令: `{item.get('cmd', '无')}`")
                             if item.get("note"):
-                                self.root.after(0, lambda it=item:
-                                                self._put(f"       说明: {it['note']}"))
+                                md_lines.append(f"- 说明: {item['note']}")
+                            md_lines.append("")
 
                     if yellows:
-                        self.root.after(0, lambda: self._put("\n需要你判断：", "y"))
+                        md_lines.append("## 🟡 需要你判断\n")
                         for i, item in enumerate(yellows, 1):
-                            self.root.after(0, lambda i=i, it=item:
-                                            self._put(f"  [{i}] {it['name']}  {it['size']}"))
-                            self.root.after(0, lambda it=item:
-                                            self._put(f"       原因: {it.get('reason', '')}"))
+                            md_lines.append(f"### {i}. {item['name']}  ({item['size']})")
+                            md_lines.append(f"- 路径: `{item['path']}`")
+                            md_lines.append(f"- 原因: {item.get('reason', '')}")
+                            md_lines.append("")
 
                     if reds:
-                        self.root.after(0, lambda: self._put("\n不建议清理：", "r"))
+                        md_lines.append("## 🔴 不建议清理\n")
                         for i, item in enumerate(reds, 1):
-                            self.root.after(0, lambda i=i, it=item:
-                                            self._put(f"  [{i}] {it['name']}  {it.get('size', '')}"))
+                            md_lines.append(f"### {i}. {item['name']}  ({item.get('size', '')})")
+                            md_lines.append(f"- 原因: {item.get('reason', '')}")
+                            md_lines.append("")
 
                     advice = result.get("advice", "")
                     if advice:
-                        self.root.after(0, lambda: self._put(f"\n其他建议：{advice}", "a"))
+                        md_lines.append("---\n")
+                        md_lines.append(f"## 其他建议\n")
+                        md_lines.append(advice)
+
+                    self.root.after(0, lambda: self.md.render("\n".join(md_lines)))
 
                     # 询问清理
                     if greens:
                         self.root.after(200, lambda: self._ask_clean(greens))
-                    else:
-                        self.root.after(0, lambda: self._put("\n没有可自动清理的项目", "y"))
 
                     self.root.after(0, lambda: self._set_status("诊断完成"))
 
             except Exception as e:
-                self.root.after(0, lambda: self._put(f"请求失败: {e}", "r"))
+                self.root.after(0, lambda: self.md.render(f"# 请求失败\n\n`{e}`"))
                 self.root.after(0, lambda: self._set_status("诊断失败"))
 
         threading.Thread(target=work, daemon=True).start()
 
     def _ask_clean(self, greens):
-        items = "\n".join(f"  - {it['name']} ({it['size']})" for it in greens)
-        if messagebox.askyesno("确认清理", f"将清理以下项目：\n\n{items}\n\n确定？"):
-            self._put("\n正在清理...", "a")
+        items = "\n".join(f"  • {it['name']} ({it['size']})" for it in greens)
+        if messagebox.askyesno("确认清理", f"将清理以下 🟢 项目：\n\n{items}\n\n确定？"):
+            self.md.append("\n---\n\n## 清理结果\n")
             cleaned = 0
             for item in greens:
                 path = item.get("path", "")
                 cmd = item.get("cmd", "")
-                if not (path.startswith(HOME) or path.startswith("/c/Users")):
-                    self._put(f"  跳过: {item['name']} (路径不在用户目录)", "y")
+                if not (path.startswith(str(HOME)) or path.startswith("/c/Users")):
+                    self.md.append(f"- ⏭️ 跳过: {item['name']} (路径不在用户目录)")
                     continue
                 try:
                     subprocess.run(cmd, shell=True, capture_output=True, timeout=30)
-                    self._put(f"  已清理: {item['name']}", "g")
+                    self.md.append(f"- ✅ 已清理: {item['name']}")
                     cleaned += 1
                 except:
-                    self._put(f"  失败: {item['name']}", "r")
-
-            self._put(f"\n清理完成，共 {cleaned} 项", "a")
+                    self.md.append(f"- ❌ 失败: {item['name']}")
+            self.md.append(f"\n**清理完成，共 {cleaned} 项**")
             self._set_status("清理完成")
 
 
