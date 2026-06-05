@@ -1,6 +1,6 @@
 # Toolbox - 电脑维护工具箱
 
-一套轻量级的 Windows 电脑维护脚本，集成 DeepSeek V4 Pro AI 诊断，专为 Git Bash 环境设计。
+一套轻量级的 Windows 电脑维护脚本，集成 DeepSeek V4 Pro AI 智能诊断与清理，专为 Git Bash 环境设计。
 
 ## 快速开始
 
@@ -27,6 +27,7 @@ memory      # 管理全局记忆
   3) 查看磁盘空间        (各盘使用率)
   4) 清理 Claude 缓存    (telemetry/快照)
   5) AI 智能诊断        (DeepSeek 分析系统状况)
+  6) AI 智能清理        (诊断+分类+一键清理)
 
   0) 退出
 ```
@@ -40,6 +41,7 @@ memory      # 管理全局记忆
 | 查看磁盘空间 | 显示 C/D/E/F 盘使用率，红黄绿三色标注 | 只读，完全安全 |
 | 清理 Claude 缓存 | 清理失败的遥测事件、Shell 快照、粘贴缓存 | 仅删除 Claude 产生的临时文件 |
 | AI 智能诊断 | 收集系统数据，发送给 DeepSeek V4 Pro 分析，输出优化建议 | 只读，数据仅发送给 DeepSeek API |
+| AI 智能清理 | 诊断 + 三级分类（🟢自动清/🟡需判断/🔴谨慎）+ 用户确认后执行清理 | 需用户确认，仅清理 🟢 项目 |
 
 ### 2. memory - 全局记忆管理
 
@@ -62,7 +64,8 @@ memory help    # 显示帮助
 | 脚本 | 命令 | 说明 |
 |------|------|------|
 | `ai-engine.sh` | `source /f/Toolbox/ai-engine.sh` | AI 调用引擎，提供 `ai_ask` 和 `ai_think` 函数 |
-| `ai-diagnose.sh` | `bash /f/Toolbox/ai-diagnose.sh` | AI 智能系统诊断 |
+| `ai-diagnose.sh` | `bash /f/Toolbox/ai-diagnose.sh` | AI 智能系统诊断（只读分析） |
+| `ai-clean.sh` | `bash /f/Toolbox/ai-clean.sh` | AI 智能诊断+清理（三级分类+确认执行） |
 | `sys-clean.sh` | `bash /f/Toolbox/sys-clean.sh [--dry-run]` | 系统清理，支持预览模式 |
 | `disk-report.sh` | `bash /f/Toolbox/disk-report.sh` | 磁盘空间报告 |
 | `dev-status.sh` | `bash /f/Toolbox/dev-status.sh` | 开发环境状态检查 |
@@ -103,6 +106,32 @@ ai_think "分析我的系统为什么变慢了"
 2. **开发环境配置** — 是否合理，有无缺失或冲突
 3. **可清理项目** — 哪些是安全的，有无需要注意的
 4. **优化建议** — 具体可执行的操作步骤
+
+### AI 智能清理
+
+在诊断基础上，增加三级分类和执行清理能力：
+
+| 分类 | 含义 | 操作 |
+|------|------|------|
+| 🟢 可自动清理 | 纯缓存、临时文件、日志，删了不影响功能 | 确认后自动执行 |
+| 🟡 需要你判断 | 可能有用但占空间，需要你决定 | 显示原因和选项，不自动执行 |
+| 🔴 不建议清理 | 系统文件、核心数据，动了可能出问题 | 仅展示，不提供操作 |
+
+**使用方式：**
+```bash
+# 菜单调用
+tools → 选 6
+
+# 直接调用
+bash /f/Toolbox/ai-clean.sh
+```
+
+**执行流程：**
+1. 扫描磁盘、开发环境、可清理项目
+2. DeepSeek V4 Pro 分析并分级
+3. 展示三级分类结果
+4. 用户选择：清理全部 🟢 / 清理指定 🟢 / 仅查看
+5. 二次确认后执行清理
 
 ### API 配置
 
@@ -209,7 +238,8 @@ F:\Toolbox\
 ├── memory-load.sh         # 记忆加载（SessionStart hook）
 ├── memory-save.sh         # 记忆保存（Stop hook）
 ├── ai-engine.sh           # DeepSeek V4 Pro AI 调用引擎
-├── ai-diagnose.sh         # AI 智能系统诊断
+├── ai-diagnose.sh         # AI 智能系统诊断（只读）
+├── ai-clean.sh            # AI 智能诊断+清理（三级分类）
 ├── sys-clean.sh           # 系统清理（支持 --dry-run）
 ├── disk-report.sh         # 磁盘空间报告
 └── dev-status.sh          # 开发环境状态检查

@@ -21,6 +21,7 @@ show_menu() {
     echo -e "  ${GREEN}3${NC}) 查看磁盘空间        (各盘使用率)"
     echo -e "  ${GREEN}4${NC}) 清理 Claude 缓存    (telemetry/快照)"
     echo -e "  ${GREEN}5${NC}) AI 智能诊断        (DeepSeek 分析系统状况)"
+    echo -e "  ${GREEN}6${NC}) AI 智能清理        (诊断+分类+一键清理)"
     echo ""
     echo -e "  ${YELLOW}0${NC}) 退出"
     echo ""
@@ -216,14 +217,15 @@ func_claude() {
 # ============ 主循环 ============
 while true; do
     show_menu
-    read -p "  请选择功能 [0-5]: " choice
+    read -p "  请选择功能 [0-6]: " choice
     case $choice in
         1) func_status ;;
         2) func_clean ;;
         3) func_disk ;;
         4) func_claude ;;
         5) bash /f/Toolbox/ai-diagnose.sh; pause ;;
+        6) bash /f/Toolbox/ai-clean.sh; pause ;;
         0) echo -e "\n  ${GREEN}再见！${NC}\n"; exit 0 ;;
-        *) echo -e "\n  ${RED}无效选项，请输入 0-5${NC}"; sleep 1 ;;
+        *) echo -e "\n  ${RED}无效选项，请输入 0-6${NC}"; sleep 1 ;;
     esac
 done
