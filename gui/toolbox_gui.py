@@ -243,46 +243,87 @@ class ToolBox:
 
     def _cmd(self, c):
         try:
-            # Windows 上 shell=True 用 cmd.exe，需要显式用 Git Bash
-            bash = r"C:\Program Files\Git\bin\bash.exe"
-            if os.path.exists(bash):
-                r = subprocess.run([bash, "-c", c], capture_output=True, text=True, timeout=60)
-            else:
-                r = subprocess.run(c, shell=True, capture_output=True, text=True, timeout=60)
+            # 尝试多个 Git Bash 路径
+            for bash in [
+                r"C:\Program Files\Git\bin\bash.exe",
+                r"C:\Program Files (x86)\Git\bin\bash.exe",
+                os.path.expandvars(r"%LOCALAPPDATA%\Programs\Git\bin\bash.exe"),
+            ]:
+                if os.path.exists(bash):
+                    r = subprocess.run([bash, "-c", c], capture_output=True, text=True, timeout=60)
+                    return (r.stdout + r.stderr).strip()
+            # 最后用 cmd.exe
+            r = subprocess.run(c, shell=True, capture_output=True, text=True, timeout=60)
+            return (r.stdout + r.stderr).strip()
+        except:
+            return ""
+
+    def _cmd_ps(self, c):
+        """用 PowerShell 执行命令（Windows 原生）"""
+        try:
+            r = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", c],
+                capture_output=True, text=True, timeout=60
+            )
             return (r.stdout + r.stderr).strip()
         except:
             return ""
 
     def _parse_disks(self):
-        """解析 df 输出，返回 [(drive, total, used, avail, pct, mount), ...]"""
-        df_out = self._cmd("df -h 2>/dev/null")
+        """解析磁盘信息，返回 [(drive, total, used, avail, pct, mount), ...]"""
+        # 优先用 PowerShell（Windows 原生，不依赖 Git Bash）
+        ps_out = self._cmd_ps(
+            "Get-PSDrive -PSProvider FileSystem | Where-Object {$_.Used -ne $null} | "
+            "ForEach-Object { "
+            "$total = [math]::Round(($_.Used + $_.Free)/1GB, 0); "
+            "$used = [math]::Round($_.Used/1GB, 0); "
+            "$free = [math]::Round($_.Free/1GB, 0); "
+            "$pct = [math]::Round($_.Used/($_.Used + $_.Free)*100, 0); "
+            "$root = $_.Root.TrimEnd('\\'); "
+            "Write-Output \"$root|$total|$used|$free|$pct\" "
+            "}"
+        )
         disks = []
-        for line in df_out.split("\n"):
-            # 从后往前解析，避免路径中有空格
-            # 格式: "C:/Program Files/Git  256G  211G   45G  83% /"
-            # 或:   "D:                    220G  160G   61G  73% /d"
-            parts = line.split()
-            if len(parts) < 6:
+        for line in ps_out.split("\n"):
+            line = line.strip()
+            if not line or "|" not in line:
                 continue
-            mount = parts[-1]      # /d or /
-            pct_str = parts[-2]    # 73%
-            avail = parts[-3]      # 61G
-            used = parts[-4]       # 160G
-            total = parts[-5]      # 220G
-            if not mount.startswith("/"):
-                continue
-            try:
-                pct = int(pct_str.replace("%", ""))
-            except:
-                continue
-            # 挂载点转盘符
-            if mount == "/":
-                drive = "C:"
-            elif len(mount) <= 3:
-                drive = mount[1:].upper() + ":"
-            else:
-                continue
-            disks.append((drive, total, used, avail, pct, mount))
+            parts = line.split("|")
+            if len(parts) == 5:
+                drive, total, used, avail, pct_str = parts
+                try:
+                    pct = int(pct_str)
+                    mount = drive[0].lower() + ":"
+                    disks.append((drive, f"{total}G", f"{used}G", f"{avail}G", pct, mount))
+                except:
+                    pass
+
+        # 如果 PowerShell 失败，回退到 df
+        if not disks:
+            df_out = self._cmd("df -h 2>/dev/null")
+            for line in df_out.split("\n"):
+                parts = line.split()
+                if len(parts) < 6:
+                    continue
+                mount = parts[-1]
+                pct_str = parts[-2]
+                avail = parts[-3]
+                used = parts[-4]
+                total = parts[-5]
+                if not mount.startswith("/"):
+                    continue
+                try:
+                    pct = int(pct_str.replace("%", ""))
+                except:
+                    continue
+                if mount == "/":
+                    drive = "C:"
+                elif len(mount) <= 3:
+                    drive = mount[1:].upper() + ":"
+                else:
+                    continue
+                disks.append((drive, total, used, avail, pct, mount))
+
         return disks
 
     # ===== 功能：电脑状态 =====
