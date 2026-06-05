@@ -18,10 +18,14 @@ HOME = Path.home()
 
 # ===== API Key =====
 API_KEY = ""
-if ENV_FILE.exists():
-    for line in ENV_FILE.read_text().splitlines():
-        if line.startswith("DEEPSEEK_API_KEY="):
-            API_KEY = line.split("=", 1)[1].strip()
+# 优先查找 exe 同目录，其次查找上级目录
+for env_path in [ENV_FILE, ROOT.parent / ".env"]:
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            if line.startswith("DEEPSEEK_API_KEY="):
+                API_KEY = line.split("=", 1)[1].strip()
+        if API_KEY:
+            break
 
 # ===== 主题色 =====
 T = {
