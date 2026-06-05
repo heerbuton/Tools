@@ -244,6 +244,32 @@ class ToolBox:
         except:
             return ""
 
+    def _parse_disks(self):
+        """解析 df 输出，返回 [(drive, total, used, avail, pct, mount), ...]"""
+        df_out = self._cmd("df -h 2>/dev/null")
+        disks = []
+        for line in df_out.split("\n"):
+            # 从后往前解析，避免路径中有空格
+            # 格式: "C:/Program Files/Git  256G  211G   45G  83% /"
+            # 或:   "D:                    220G  160G   61G  73% /d"
+            parts = line.split()
+            if len(parts) < 6:
+                continue
+            mount = parts[-1]      # /d
+            pct_str = parts[-2]    # 73%
+            avail = parts[-3]      # 61G
+            used = parts[-4]       # 160G
+            total = parts[-5]      # 220G
+            # 盘符是 mount 去掉 / 前缀并大写
+            if mount.startswith("/") and len(mount) <= 3:
+                drive = mount[1:].upper() + ":"
+                try:
+                    pct = int(pct_str.replace("%", ""))
+                    disks.append((drive, total, used, avail, pct, mount))
+                except:
+                    pass
+        return disks
+
     # ===== 功能：电脑状态 =====
 
     def _do_status(self):
@@ -282,16 +308,11 @@ class ToolBox:
             lines.append("## 磁盘使用率\n")
             lines.append("| 盘符 | 总容量 | 已用 | 可用 | 使用率 | 状态 |")
             lines.append("|------|--------|------|------|--------|------|")
-            df_out = self._cmd("df -h 2>/dev/null | grep -iE '^[C-F]:'")
-            for line in df_out.split("\n"):
-                parts = line.split()
-                if len(parts) >= 6:
-                    drive, total, used, avail = parts[0], parts[1], parts[2], parts[3]
-                    pct = int(parts[4].replace("%", ""))
-                    if pct >= 90: status = "🔴 危险"
-                    elif pct >= 75: status = "🟡 注意"
-                    else: status = "🟢 正常"
-                    lines.append(f"| {drive} | {total} | {used} | {avail} | {pct}% | {status} |")
+            for drive, total, used, avail, pct, mount in self._parse_disks():
+                if pct >= 90: status = "🔴 危险"
+                elif pct >= 75: status = "🟡 注意"
+                else: status = "🟢 正常"
+                lines.append(f"| {drive} | {total} | {used} | {avail} | {pct}% | {status} |")
 
             self.root.after(0, lambda: self.md.render("\n".join(lines)))
             self.root.after(0, lambda: self._set_status("检测完成"))
@@ -369,16 +390,11 @@ class ToolBox:
         lines = ["# 磁盘空间\n"]
         lines.append("| 盘符 | 总容量 | 已用 | 可用 | 使用率 | 状态 |")
         lines.append("|------|--------|------|------|--------|------|")
-        df_out = self._cmd("df -h 2>/dev/null | grep -iE '^[C-F]:'")
-        for line in df_out.split("\n"):
-            parts = line.split()
-            if len(parts) >= 6:
-                drive, total, used, avail = parts[0], parts[1], parts[2], parts[3]
-                pct = int(parts[4].replace("%", ""))
-                if pct >= 90: status = "🔴 危险"
-                elif pct >= 75: status = "🟡 注意"
-                else: status = "🟢 正常"
-                lines.append(f"| {drive} | {total} | {used} | {avail} | {pct}% | {status} |")
+        for drive, total, used, avail, pct, mount in self._parse_disks():
+            if pct >= 90: status = "🔴 危险"
+            elif pct >= 75: status = "🟡 注意"
+            else: status = "🟢 正常"
+            lines.append(f"| {drive} | {total} | {used} | {avail} | {pct}% | {status} |")
 
         lines.append("\n---\n")
         lines.append("> 🔴 红色 = 快满 (>90%)  🟡 黄色 = 注意 (>75%)  🟢 绿色 = 正常")
@@ -423,21 +439,14 @@ class ToolBox:
                  bg=T["bg"], fg=T["accent"]).pack(pady=(20, 15))
 
         # 获取磁盘
-        df_out = self._cmd("df -h 2>/dev/null | grep -iE '^[C-F]:'")
-        disks = []
-        for line in df_out.split("\n"):
-            parts = line.split()
-            if len(parts) >= 6:
-                drive, total, used, avail = parts[0], parts[1], parts[2], parts[3]
-                pct = int(parts[4].replace("%", ""))
-                disks.append((drive, total, used, avail, pct))
+        disks = self._parse_disks()
 
         var = tk.StringVar(value="all")
 
         frame = tk.Frame(win, bg=T["card"], relief="flat")
         frame.pack(fill="x", padx=20, pady=(0, 15))
 
-        for drive, total, used, avail, pct in disks:
+        for drive, total, used, avail, pct, mount in disks:
             color = T["red"] if pct >= 90 else (T["yellow"] if pct >= 75 else T["green"])
             f = tk.Frame(frame, bg=T["card"])
             f.pack(fill="x", padx=12, pady=4)
@@ -474,24 +483,33 @@ class ToolBox:
             # ===== 全量扫描 =====
             scan_lines = []
 
+            def on_selected_disk(path_str):
+                """检查路径是否在选中的磁盘上"""
+                if disk_choice == "all":
+                    return True
+                # Windows: C: D: E: F:
+                drive_letter = disk_choice[0].upper()
+                return path_str.upper().startswith(drive_letter + ":") or path_str.startswith("/" + drive_letter.lower())
+
             # 1. 用户目录日志
             for f in HOME.glob("java_error_in_pycharm64_*.log"):
-                scan_lines.append(f"LOG | {f.name} | {f.stat().st_size//1024}KB | {f}")
+                if on_selected_disk(str(f)):
+                    scan_lines.append(f"LOG | {f.name} | {f.stat().st_size//1024}KB | {f}")
             for name in ["jmeter.log", "mumu_boot.txt"]:
                 p = HOME / name
-                if p.exists():
+                if p.exists() and on_selected_disk(str(p)):
                     scan_lines.append(f"LOG | {name} | {p.stat().st_size//1024}KB | {p}")
 
             # 2. 过时安装脚本
             for name in ["msfinstall"]:
                 p = HOME / name
-                if p.exists():
+                if p.exists() and on_selected_disk(str(p)):
                     scan_lines.append(f"SCRIPT | {name} | {p.stat().st_size//1024}KB | {p}")
 
             # 3. Claude 缓存
             for d_name in ["telemetry", "paste-cache", "shell-snapshots"]:
                 d = HOME / ".claude" / d_name
-                if d.exists():
+                if d.exists() and on_selected_disk(str(d)):
                     files = [f for f in d.iterdir() if f.is_file()]
                     if files:
                         total = sum(f.stat().st_size for f in files)
@@ -499,7 +517,7 @@ class ToolBox:
 
             # 4. Temp 目录
             temp_dir = HOME / "AppData" / "Local" / "Temp"
-            if temp_dir.exists():
+            if temp_dir.exists() and on_selected_disk(str(temp_dir)):
                 now = time.time()
                 old = [f for f in temp_dir.iterdir() if f.is_file() and (now - f.stat().st_mtime) > 7*86400]
                 if old:
@@ -520,7 +538,7 @@ class ToolBox:
                 (".cache 通用", HOME / ".cache"),
             ]
             for name, path in dev_caches:
-                if path.exists():
+                if path.exists() and on_selected_disk(str(path)):
                     try:
                         total = sum(f.stat().st_size for dp, _, files in os.walk(path) for f in [Path(dp) / fn for fn in files] if f.exists())
                         if total > 1024 * 1024:
@@ -530,7 +548,7 @@ class ToolBox:
 
             # 6. 根目录 node_modules
             nm = HOME / "node_modules"
-            if nm.exists():
+            if nm.exists() and on_selected_disk(str(nm)):
                 try:
                     total = sum(f.stat().st_size for dp, _, files in os.walk(nm) for f in [Path(dp) / fn for fn in files] if f.exists())
                     scan_lines.append(f"DEV_CACHE | 根目录 node_modules | {total//(1024*1024)}MB | {nm}")
@@ -539,7 +557,7 @@ class ToolBox:
 
             # 7. Docker
             docker_dir = HOME / ".docker"
-            if docker_dir.exists():
+            if docker_dir.exists() and on_selected_disk(str(docker_dir)):
                 try:
                     total = sum(f.stat().st_size for dp, _, files in os.walk(docker_dir) for f in [Path(dp) / fn for fn in files] if f.exists())
                     if total > 1024*1024:
@@ -549,7 +567,7 @@ class ToolBox:
 
             # 8. Downloads 安装包
             dl_dir = HOME / "Downloads"
-            if dl_dir.exists():
+            if dl_dir.exists() and on_selected_disk(str(dl_dir)):
                 installers = [(f.name, f.stat().st_size) for f in dl_dir.iterdir()
                               if f.is_file() and f.suffix.lower() in ('.exe', '.msi', '.zip', '.rar', '.7z', '.iso', '.tar.gz')]
                 if installers:
@@ -558,7 +576,7 @@ class ToolBox:
 
             # 9. 回收站
             recycle = Path("C:/$Recycle.Bin")
-            if recycle.exists():
+            if recycle.exists() and on_selected_disk("C:"):
                 try:
                     total = sum(f.stat().st_size for dp, _, files in os.walk(recycle) for f in [Path(dp) / fn for fn in files] if f.exists())
                     if total > 1024*1024:
@@ -568,7 +586,7 @@ class ToolBox:
 
             # 10. Windows Update 缓存
             wu_cache = Path("C:/Windows/SoftwareDistribution/Download")
-            if wu_cache.exists():
+            if wu_cache.exists() and on_selected_disk("C:"):
                 try:
                     total = sum(f.stat().st_size for dp, _, files in os.walk(wu_cache) for f in [Path(dp) / fn for fn in files] if f.exists())
                     if total > 1024*1024:
@@ -583,7 +601,7 @@ class ToolBox:
                 ("Firefox 缓存", HOME / "AppData/Local/Mozilla/Firefox/Profiles"),
             ]
             for name, path in browser_caches:
-                if path.exists():
+                if path.exists() and on_selected_disk(str(path)):
                     try:
                         total = sum(f.stat().st_size for dp, _, files in os.walk(path) for f in [Path(dp) / fn for fn in files] if f.exists())
                         if total > 1024*1024:
@@ -592,10 +610,11 @@ class ToolBox:
                         pass
 
             # 磁盘信息
+            all_disks = self._parse_disks()
             if disk_choice == "all":
-                disk_info = self._cmd("df -h 2>/dev/null | grep -iE '^[C-F]:'")
+                disk_info = "\n".join(f"{d} {t} {u} {a} {p}% {m}" for d, t, u, a, p, m in all_disks)
             else:
-                disk_info = self._cmd(f"df -h 2>/dev/null | grep '{disk_choice}'")
+                disk_info = "\n".join(f"{d} {t} {u} {a} {p}% {m}" for d, t, u, a, p, m in all_disks if d == disk_choice)
 
             scan_text = "\n".join(scan_lines) if scan_lines else "未发现可清理项目"
 
