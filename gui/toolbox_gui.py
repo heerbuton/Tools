@@ -239,7 +239,12 @@ class ToolBox:
 
     def _cmd(self, c):
         try:
-            r = subprocess.run(c, shell=True, capture_output=True, text=True, timeout=60)
+            # Windows 上 shell=True 用 cmd.exe，需要显式用 Git Bash
+            bash = r"C:\Program Files\Git\bin\bash.exe"
+            if os.path.exists(bash):
+                r = subprocess.run([bash, "-c", c], capture_output=True, text=True, timeout=60)
+            else:
+                r = subprocess.run(c, shell=True, capture_output=True, text=True, timeout=60)
             return (r.stdout + r.stderr).strip()
         except:
             return ""
@@ -255,19 +260,25 @@ class ToolBox:
             parts = line.split()
             if len(parts) < 6:
                 continue
-            mount = parts[-1]      # /d
+            mount = parts[-1]      # /d or /
             pct_str = parts[-2]    # 73%
             avail = parts[-3]      # 61G
             used = parts[-4]       # 160G
             total = parts[-5]      # 220G
-            # 盘符是 mount 去掉 / 前缀并大写
-            if mount.startswith("/") and len(mount) <= 3:
+            if not mount.startswith("/"):
+                continue
+            try:
+                pct = int(pct_str.replace("%", ""))
+            except:
+                continue
+            # 挂载点转盘符
+            if mount == "/":
+                drive = "C:"
+            elif len(mount) <= 3:
                 drive = mount[1:].upper() + ":"
-                try:
-                    pct = int(pct_str.replace("%", ""))
-                    disks.append((drive, total, used, avail, pct, mount))
-                except:
-                    pass
+            else:
+                continue
+            disks.append((drive, total, used, avail, pct, mount))
         return disks
 
     # ===== 功能：电脑状态 =====
