@@ -5,3 +5,10 @@
 # OS
 .DS_Store
 Thumbs.db
+
+# PyInstaller build artifacts
+gui/build/
+gui/dist/
+gui/*.spec
+__pycache__/
+*.pyc

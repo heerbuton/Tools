@@ -1,10 +1,19 @@
 # Toolbox - 电脑维护工具箱
 
-一套轻量级的 Windows 电脑维护脚本，集成 DeepSeek V4 Pro AI 智能诊断与清理，专为 Git Bash 环境设计。
+一套轻量级的 Windows 电脑维护工具，集成 DeepSeek V4 Pro AI 智能诊断与清理。提供两种使用方式：
+
+- **GUI 可视化版** — 双击 `Toolbox.exe` 即可使用，无需命令行
+- **CLI 命令行版** — 在 Git Bash 中输入 `tools` 使用
 
 ## 快速开始
 
-打开 Git Bash，输入以下任意命令即可使用：
+### GUI 可视化版（推荐）
+
+双击 `F:\Toolbox\Toolbox.exe` 打开图形界面，点击按钮即可使用所有功能。
+
+### CLI 命令行版
+
+打开 Git Bash，输入以下任意命令：
 
 ```bash
 tools       # 打开工具箱主菜单
@@ -232,8 +241,9 @@ memory   # 应该看到全局记忆
 ```
 F:\Toolbox\
 ├── README.md              # 本文档
+├── Toolbox.exe            # GUI 可视化版（双击运行）
 ├── .env                   # DeepSeek API Key（不提交版本控制）
-├── tools.sh               # 工具箱主菜单（入口）
+├── tools.sh               # 工具箱主菜单（CLI 入口）
 ├── memory.sh              # 全局记忆管理
 ├── memory-load.sh         # 记忆加载（SessionStart hook）
 ├── memory-save.sh         # 记忆保存（Stop hook）
@@ -242,7 +252,10 @@ F:\Toolbox\
 ├── ai-clean.sh            # AI 智能诊断+清理（三级分类）
 ├── sys-clean.sh           # 系统清理（支持 --dry-run）
 ├── disk-report.sh         # 磁盘空间报告
-└── dev-status.sh          # 开发环境状态检查
+├── dev-status.sh          # 开发环境状态检查
+└── gui/
+    ├── toolbox_gui.py     # GUI 源码
+    └── build.bat          # 打包脚本
 ```
 
 ## 常见问题
