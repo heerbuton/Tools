@@ -152,20 +152,22 @@ class ToolBox:
         tk.Label(win, text="选择要扫描的磁盘", font=("Microsoft YaHei UI", 12, "bold"),
                  bg=C["bg"], fg=C["accent"]).pack(pady=(15, 10))
 
-        # 获取磁盘列表
-        df_out = self._cmd("df -h 2>/dev/null | grep -iE '^C:|^D:|^E:|^F:'")
+        # 获取磁盘列表 (Windows Git Bash: "D:  220G  160G  61G  73% /d")
+        df_out = self._cmd("df -h 2>/dev/null | grep -iE '^[C-F]:'")
         disks = []
         for line in df_out.split("\n"):
             parts = line.split()
-            if len(parts) >= 5:
-                mount = parts[-1]
-                pct = parts[4].replace("%", "")
-                disks.append((mount, parts[1], parts[3], pct))
+            if len(parts) >= 6:
+                drive = parts[0]   # D:
+                total = parts[1]   # 220G
+                avail = parts[3]   # 61G
+                pct = parts[4].replace("%", "")  # 73
+                disks.append((drive, total, avail, pct))
 
         var = tk.StringVar(value="all")
-        for mount, total, avail, pct in disks:
+        for drive, total, avail, pct in disks:
             tag = f"  ({pct}% 已用, 可用 {avail})"
-            tk.Radiobutton(win, text=f"{mount}{tag}", variable=var, value=mount,
+            tk.Radiobutton(win, text=f"{drive}  总计 {total}{tag}", variable=var, value=drive,
                            font=("Microsoft YaHei UI", 10), bg=C["bg"], fg=C["fg"],
                            selectcolor=C["surface"], activebackground=C["bg"],
                            activeforeground=C["accent"]).pack(anchor="w", padx=30, pady=2)
@@ -221,15 +223,15 @@ class ToolBox:
 
             self.root.after(0, lambda: self._put(""))
             self.root.after(0, lambda: self._put("磁盘使用率", "b"))
-            df_out = self._cmd("df -h 2>/dev/null | grep -iE '^C:|^D:|^E:|^F:'")
+            df_out = self._cmd("df -h 2>/dev/null | grep -iE '^[C-F]:'")
             for line in df_out.split("\n"):
                 parts = line.split()
-                if len(parts) >= 5:
-                    mount, total, used, avail = parts[-1], parts[1], parts[2], parts[3]
+                if len(parts) >= 6:
+                    drive, total, used, avail = parts[0], parts[1], parts[2], parts[3]
                     pct = int(parts[4].replace("%", ""))
                     tag = "r" if pct >= 90 else ("y" if pct >= 75 else "g")
-                    self.root.after(0, lambda m=mount, t=total, u=used, a=avail, p=pct, tg=tag:
-                                    self._put(f"  {m}  总计 {t}  已用 {u}  可用 {a}  {p}%", tg))
+                    self.root.after(0, lambda d=drive, t=total, u=used, a=avail, p=pct, tg=tag:
+                                    self._put(f"  {d}  总计 {t}  已用 {u}  可用 {a}  {p}%", tg))
 
             self.root.after(0, lambda: self._set_status("检测完成"))
 
@@ -292,11 +294,11 @@ class ToolBox:
         self._put("分区使用率\n", "b")
         for line in df_out.split("\n"):
             parts = line.split()
-            if len(parts) >= 5:
-                mount, total, used, avail = parts[-1], parts[1], parts[2], parts[3]
+            if len(parts) >= 6:
+                drive, total, used, avail = parts[0], parts[1], parts[2], parts[3]
                 pct = int(parts[4].replace("%", ""))
                 tag = "r" if pct >= 90 else ("y" if pct >= 75 else "g")
-                self._put(f"  {mount}  总计 {total}  已用 {used}  可用 {avail}  {pct}%", tag)
+                self._put(f"  {drive}  总计 {total}  已用 {used}  可用 {avail}  {pct}%", tag)
 
         self._put("\n  红色 = 快满 (>90%)  黄色 = 注意 (>75%)  绿色 = 正常", "a")
         self._set_status("扫描完成")
